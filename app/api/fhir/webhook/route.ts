@@ -20,17 +20,23 @@ const RARE_ONCOLOGY_CODES = [
 
 // Rare SNOMED-CT concept IDs for condition matching
 const RARE_SNOMED_CONCEPTS = [
-  302849000,  // Mesothelioma
-  109989006,  // Adrenocortical carcinoma
-  404074006,  // Merkel cell carcinoma
-  399488007,  // Uveal melanoma
+  302849000, // Mesothelioma
+  109989006, // Adrenocortical carcinoma
+  404074006, // Merkel cell carcinoma
+  399488007, // Uveal melanoma
 ];
+
+interface FhirCoding {
+  system: string;
+  code: string;
+  display?: string;
+}
 
 interface FhirEntry {
   resource: {
     resourceType: string;
     id?: string;
-    code?: { coding?: { system: string; code: string; display?: string }[] };
+    code?: { coding?: FhirCoding[] };
     text?: { div: string };
     content?: { attachment: { data: string } }[];
   };
@@ -43,12 +49,15 @@ interface FhirBundle {
 }
 
 function hashMrn(mrn: string): string {
-  return crypto.createHash('sha256').update(mrn + (process.env.MRN_SALT ?? 'autocase-salt')).digest('hex').slice(0, 32);
+  return crypto
+    .createHash('sha256')
+    .update(mrn + (process.env.MRN_SALT ?? 'autocase-salt'))
+    .digest('hex')
+    .slice(0, 32);
 }
 
 function detectRareCase(conditions: FhirEntry[]): { isRare: boolean; reason: string } {
   const matchedCodes: string[] = [];
-
   for (const entry of conditions) {
     const codings = entry.resource.code?.coding ?? [];
     for (const coding of codings) {
@@ -61,104 +70,99 @@ function detectRareCase(conditions: FhirEntry[]): { isRare: boolean; reason: str
       }
     }
   }
-
-  if (matchedCodes.length > 0) {
-    return {
-      isRare: true,
-      reason: `Rare oncology codes detected: ${matchedCodes.join(', ')}`,
-    };
-  }
-
-  return { isRare: false, reason: '' };
+  return {
+    isRare: matchedCodes.length > 0,
+    reason: matchedCodes.join(', '),
+  };
 }
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    // Validate webhook signature (basic HMAC for Epic/Cerner integrations)
-    const webhookSecret = process.env.FHIR_WEBHOOK_SECRET;
-    if (webhookSecret) {
-      const signature = request.headers.get('x-hub-signature-256');
-      const body = await request.text();
-      const expected = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(body).digest('hex');
-      if (signature !== expected) {
-        return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 });
-      }
-    }
+    const bundle: FhirBundle = await req.json();
 
-    const fhirBundle: FhirBundle = await request.json();
-
-    if (fhirBundle.resourceType !== 'Bundle') {
+    if (bundle.resourceType !== 'Bundle') {
       return NextResponse.json({ error: 'Expected FHIR Bundle' }, { status: 400 });
     }
 
-    const entries = fhirBundle.entry ?? [];
+    const entries = bundle.entry ?? [];
 
-    // Extract key resources
-    const patientResource = entries.find(e => e.resource.resourceType === 'Patient');
-    const conditions = entries.filter(e => e.resource.resourceType === 'Condition');
-    const documents = entries.filter(
-      e => e.resource.resourceType === 'DocumentReference' || e.resource.resourceType === 'DiagnosticReport'
-    );
+    // Extract patient and conditions from bundle
+    const patientEntry = entries.find((e) => e.resource.resourceType === 'Patient');
+    const conditions = entries.filter((e) => e.resource.resourceType === 'Condition');
+    const documentRefs = entries.filter((e) => e.resource.resourceType === 'DocumentReference');
 
-    if (!patientResource) {
-      return NextResponse.json({ error: 'No Patient resource in Bundle' }, { status: 400 });
+    if (!patientEntry) {
+      return NextResponse.json({ error: 'No Patient resource in bundle' }, { status: 400 });
     }
 
-    // Hash MRN for de-identification
-    const rawMrn = patientResource.resource.id ?? 'unknown';
-    const hashedMrn = hashMrn(rawMrn);
-
-    // Extract or construct clinical narrative from documents
-    const narrativeText = documents
-      .map(d => d.resource.text?.div?.replace(/<[^>]*>/g, ' ').trim() ?? '')
-      .filter(Boolean)
-      .join('\n\n') || fhirBundle.text?.div?.replace(/<[^>]*>/g, ' ').trim() || 'No narrative available';
-
-    // Detect rare oncology case
+    // Check for rare oncology conditions
     const { isRare, reason } = detectRareCase(conditions);
 
-    // Upsert Person (OMOP CDM)
-    const person = await prisma.person.upsert({
+    if (!isRare) {
+      return NextResponse.json({
+        flagged: false,
+        message: 'No rare oncology codes detected',
+      });
+    }
+
+    // Hash patient MRN for de-identification
+    const mrn = patientEntry.resource.id ?? crypto.randomUUID();
+    const hashedMrn = hashMrn(mrn);
+
+    // Collect clinical text for LLM processing
+    const clinicalText = [
+      ...conditions.map((c) => c.resource.text?.div ?? ''),
+      ...documentRefs.flatMap((d) =>
+        (d.resource.content ?? []).map((c) =>
+          Buffer.from(c.attachment.data, 'base64').toString('utf-8')
+        )
+      ),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+
+    // Upsert OMOP Person — find or create
+    let person = await prisma.person.findFirst({
       where: { person_source_value: hashedMrn },
-      update: {},
-      create: {
-        gender_concept_id: 8521,     // Unknown/Other concept as default
-        year_of_birth: 1970,          // Will be updated by clinical abstractor
-        race_concept_id: 0,
-        ethnicity_concept_id: 0,
-        person_source_value: hashedMrn,
-      },
     });
 
-    // Create CaseReport with FLAGGED status
-    const caseReport = await prisma.caseReport.create({
+    if (!person) {
+      person = await prisma.person.create({
+        data: {
+          person_source_value: hashedMrn,
+          gender_concept_id: 8521, // Unknown/Other
+          year_of_birth: 0,
+          race_concept_id: 0,
+          ethnicity_concept_id: 0,
+        },
+      });
+    }
+
+    // Create clinical case
+    const clinicalCase = await prisma.clinicalCase.create({
       data: {
         person_id: person.person_id,
-        provider_id: 1, // Default attending; will be linked by physician in dashboard
-        emr_narrative: narrativeText.slice(0, 10000), // Cap at 10K chars
-        is_rare_flag: isRare,
-        rare_flag_reason: reason || null,
-        status: isRare ? 'CONSENT_PENDING' : 'FLAGGED',
+        fhir_bundle: bundle as object,
+        icd10_codes: reason,
+        status: 'PENDING_CONSENT',
+        flagged_at: new Date(),
       },
     });
 
-    // If rare, auto-trigger OMOP extraction (async, non-blocking)
-    if (isRare) {
-      processEmrToOmop(caseReport.case_id).catch(err =>
-        console.error(`OMOP extraction failed for case ${caseReport.case_id}:`, err)
-      );
+    // Async LLM OMOP extraction (non-blocking)
+    if (clinicalText) {
+      processEmrToOmop(clinicalCase.case_id, clinicalText).catch(console.error);
     }
 
     return NextResponse.json({
-      success: true,
-      caseId: caseReport.case_id,
-      personId: person.person_id,
-      isRare,
-      flagReason: reason,
-      status: caseReport.status,
+      flagged: true,
+      reason,
+      case_id: clinicalCase.case_id,
+      person_id: person.person_id,
+      message: 'Rare oncology case flagged. Awaiting patient consent.',
     });
   } catch (error) {
-    console.error('FHIR Webhook Error:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    console.error('[FHIR Webhook] Error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
