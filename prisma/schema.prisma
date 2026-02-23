@@ -1,0 +1,149 @@
+// prisma/schema.prisma
+// TASK-2: OMOP v5.4 compliant schema with Next.js platform extensions
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// PLATFORM MODELS (Auth, Monetization, Web3)
+// ─────────────────────────────────────────────
+
+model Physician {
+  provider_id   Int          @id @default(autoincrement())
+  npi           String?      @unique
+  name          String
+  email         String?      @unique
+  specialty     String?
+  institution   String?
+  solana_wallet String?      @unique
+  created_at    DateTime     @default(now())
+  updated_at    DateTime     @updatedAt
+  cases         CaseReport[]
+}
+
+model Consent {
+  consent_id    Int      @id @default(autoincrement())
+  person_id     Int      @unique
+  person        Person   @relation(fields: [person_id], references: [person_id])
+  status        String   @default("PENDING") // PENDING | GRANTED | REVOKED
+  solana_wallet String?
+  rwe_opt_in    Boolean  @default(false)
+  tier          Int      @default(1)         // 1=aggregate-only, 2=episode-level
+  policy_version String  @default("1.0")
+  signed_at     DateTime @default(now())
+  revoked_at    DateTime?
+  tx_hash       String?  // On-chain Solana consent attestation
+}
+
+model CaseReport {
+  case_id       Int       @id @default(autoincrement())
+  person_id     Int
+  provider_id   Int
+  person        Person    @relation(fields: [person_id], references: [person_id])
+  provider      Physician @relation(fields: [provider_id], references: [provider_id])
+  emr_narrative String    // PHI-stripped raw narrative
+  ai_summary    String?   // LLM-generated OMOP abstract
+  is_rare_flag  Boolean   @default(false)
+  rare_flag_reason String? // Audit trail: which codes triggered the flag
+  status        String    @default("FLAGGED") // FLAGGED | CONSENT_PENDING | PUBLISHED | REJECTED
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+}
+
+model RweQuery {
+  query_id        Int      @id @default(autoincrement())
+  client_name     String
+  snomed_concept  Int
+  payment_amount  Float
+  patient_count   Int
+  tx_hash         String?  // Solana royalty distribution tx
+  stripe_charge   String?  // Stripe charge ID
+  created_at      DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// OMOP v5.4 CORE CLINICAL TABLES
+// ─────────────────────────────────────────────
+
+model Person {
+  person_id              Int      @id @default(autoincrement())
+  gender_concept_id      Int      // OMOP: 8507=Male, 8532=Female
+  year_of_birth          Int
+  month_of_birth         Int?
+  day_of_birth           Int?
+  race_concept_id        Int      @default(0)
+  ethnicity_concept_id   Int      @default(0)
+  person_source_value    String?  // Hashed MRN only
+  gender_source_value    String?
+  created_at             DateTime @default(now())
+
+  // Relations
+  conditions  ConditionOccurrence[]
+  drugs       DrugExposure[]
+  measurements Measurement[]
+  observations Observation[]
+  consent     Consent?
+  cases       CaseReport[]
+}
+
+model ConditionOccurrence {
+  condition_occurrence_id   Int      @id @default(autoincrement())
+  person_id                 Int
+  condition_concept_id      Int      // SNOMED-CT code
+  condition_start_date      DateTime
+  condition_end_date        DateTime?
+  condition_type_concept_id Int      @default(32020) // EHR encounter
+  stop_reason               String?
+  condition_source_value    String?  // ICD-10/ICD-O source
+  condition_status_concept_id Int?   // OMOP Oncology: primary/met/recurrent
+  person                    Person   @relation(fields: [person_id], references: [person_id])
+}
+
+model DrugExposure {
+  drug_exposure_id          Int      @id @default(autoincrement())
+  person_id                 Int
+  drug_concept_id           Int      // RxNorm or HemOnc concept
+  drug_exposure_start_date  DateTime
+  drug_exposure_end_date    DateTime?
+  drug_type_concept_id      Int      @default(32817) // EHR order
+  quantity                  Float?
+  route_concept_id          Int?
+  lot_number                String?
+  drug_source_value         String?
+  person                    Person   @relation(fields: [person_id], references: [person_id])
+}
+
+model Measurement {
+  measurement_id            Int      @id @default(autoincrement())
+  person_id                 Int
+  measurement_concept_id    Int      // LOINC code
+  measurement_date          DateTime
+  measurement_type_concept_id Int    @default(32856) // Lab
+  operator_concept_id       Int?
+  value_as_number           Float?
+  value_as_concept_id       Int?     // e.g., Positive=9191
+  unit_concept_id           Int?
+  range_low                 Float?
+  range_high                Float?
+  measurement_source_value  String?
+  person                    Person   @relation(fields: [person_id], references: [person_id])
+}
+
+model Observation {
+  observation_id            Int      @id @default(autoincrement())
+  person_id                 Int
+  observation_concept_id    Int      // SNOMED/LOINC
+  observation_date          DateTime
+  observation_type_concept_id Int    @default(38000280)
+  value_as_number           Float?
+  value_as_string           String?
+  value_as_concept_id       Int?
+  observation_source_value  String?
+  person                    Person   @relation(fields: [person_id], references: [person_id])
+}
