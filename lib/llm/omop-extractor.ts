@@ -1,9 +1,9 @@
 // lib/llm/omop-extractor.ts
-// TASK-5: Claude-powered OMOP abstraction from raw EMR text
-import Anthropic from '@anthropic-ai/sdk';
+// TASK-5: OpenAI GPT-4o powered OMOP abstraction from raw EMR text
+import OpenAI from 'openai';
 import { prisma } from '@/lib/prisma';
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface OmopCondition {
   concept_id: number;       // SNOMED-CT
@@ -37,111 +37,55 @@ export interface OmopAbstraction {
   drugs: OmopDrug[];
   measurements: OmopMeasurement[];
   narrative_summary: string;
-  rare_flag_reasoning: string;
-  overall_confidence: number;
+  deidentified_text: string;
+  confidence_score: number;
 }
 
-const SYSTEM_PROMPT = `You are a board-certified oncology clinical data abstractor.
-Your role is to extract structured OMOP CDM v5.4 data from clinical narratives.
+export async function processEmrToOmop(
+  rawNoteText: string,
+  caseReportId: string
+): Promise<OmopAbstraction> {
+  const systemPrompt = `You are a clinical NLP system specialized in oncology OMOP CDM v5.4 abstraction.
+Your task:
+1. Extract all conditions, drugs, and measurements from the clinical note
+2. Map each to OMOP standard concepts (SNOMED-CT for conditions, RxNorm for drugs, LOINC for labs)
+3. De-identify all PHI (names, dates->relative, MRNs, addresses)
+4. Return ONLY valid JSON matching the OmopAbstraction schema
+5. Focus on rare oncology: mesothelioma, adrenocortical carcinoma, uveal melanoma, MCC, appendiceal
+6. Flag ICD-10 codes: C38.4, C45.9, C48.2, C74.0, C44.20, C69.3, C18.1, C80.1
 
-Rules:
-- Return ONLY valid JSON matching the OmopAbstraction schema
-- Use real SNOMED-CT concept_ids for conditions (e.g. 363346000=malignant neoplasm)
-- Use real LOINC codes for measurements (e.g. 85319-2=EGFR mutation, 10334-1=AFP)
-- Use real RxNorm concept_ids for drugs (e.g. 1657071=osimertinib)
-- Never include patient name, DOB, MRN, or any PHI in output
-- Set confidence 0.0-1.0 based on how explicitly stated the finding is
-- For rare case reasoning, cite specific ICD/SNOMED codes and clinical context`;
-
-export async function processEmrToOmop(caseId: number): Promise<OmopAbstraction> {
-  const caseReport = await prisma.caseReport.findUnique({
-    where: { case_id: caseId },
-  });
-
-  if (!caseReport) throw new Error(`CaseReport ${caseId} not found`);
-
-  const msg = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20241022',
-    max_tokens: 2048,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: 'user',
-        content: `Extract OMOP CDM structured data from the following clinical narrative.
-Return a JSON object with this exact schema:
+Schema:
 {
-  "conditions": [{"concept_id": number, "source_value": string, "start_date": "YYYY-MM-DD", "confidence": number}],
-  "drugs": [{"concept_id": number, "source_value": string, "start_date": "YYYY-MM-DD", "line_of_therapy": number}],
-  "measurements": [{"concept_id": number, "source_value": string, "date": "YYYY-MM-DD", "value_as_number": number}],
-  "narrative_summary": "2-3 sentence oncology case summary",
-  "rare_flag_reasoning": "Explanation of why this is a rare case",
-  "overall_confidence": number
-}
+  "conditions": [{"concept_id": number, "source_value": string, "start_date": string, "confidence": number}],
+  "drugs": [{"concept_id": number, "source_value": string, "start_date": string}],
+  "measurements": [{"concept_id": number, "source_value": string, "date": string}],
+  "narrative_summary": string,
+  "deidentified_text": string,
+  "confidence_score": number
+}`;
 
-CLINICAL NARRATIVE:
-${caseReport.emr_narrative}`,
-      },
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Extract OMOP data from this clinical note:\n\n${rawNoteText}` },
     ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+    max_tokens: 4096,
   });
 
-  const rawText = (msg.content[0] as { type: 'text'; text: string }).text;
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('OpenAI returned empty response');
 
-  // Extract JSON from response (handle markdown code blocks if present)
-  const jsonMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, rawText];
-  const abstraction: OmopAbstraction = JSON.parse(jsonMatch[1]?.trim() ?? rawText);
+  const abstraction = JSON.parse(content) as OmopAbstraction;
 
-  // Write structured OMOP data to Prisma
-  for (const cond of abstraction.conditions) {
-    if (cond.confidence >= 0.7) {
-      await prisma.conditionOccurrence.create({
-        data: {
-          person_id: caseReport.person_id,
-          condition_concept_id: cond.concept_id,
-          condition_start_date: new Date(cond.start_date),
-          condition_end_date: cond.end_date ? new Date(cond.end_date) : null,
-          condition_type_concept_id: 32020, // EHR encounter
-          condition_source_value: cond.source_value,
-          condition_status_concept_id: cond.status_concept_id ?? null,
-        },
-      });
-    }
-  }
-
-  for (const drug of abstraction.drugs) {
-    await prisma.drugExposure.create({
-      data: {
-        person_id: caseReport.person_id,
-        drug_concept_id: drug.concept_id,
-        drug_exposure_start_date: new Date(drug.start_date),
-        drug_exposure_end_date: drug.end_date ? new Date(drug.end_date) : null,
-        drug_type_concept_id: 32817, // EHR order
-        drug_source_value: drug.source_value,
-        route_concept_id: drug.route_concept_id ?? null,
-      },
-    });
-  }
-
-  for (const meas of abstraction.measurements) {
-    await prisma.measurement.create({
-      data: {
-        person_id: caseReport.person_id,
-        measurement_concept_id: meas.concept_id,
-        measurement_date: new Date(meas.date),
-        measurement_type_concept_id: 32856, // Lab result
-        value_as_number: meas.value_as_number ?? null,
-        value_as_concept_id: meas.value_as_concept_id ?? null,
-        measurement_source_value: meas.source_value,
-      },
-    });
-  }
-
-  // Update case status and summary
+  // Store the processed extraction result
   await prisma.caseReport.update({
-    where: { case_id: caseId },
+    where: { id: caseReportId },
     data: {
-      status: 'PUBLISHED',
-      ai_summary: abstraction.narrative_summary,
-      rare_flag_reason: abstraction.rare_flag_reasoning,
+      omop_json: abstraction as never,
+      status: 'OMOP_EXTRACTED',
     },
   });
 
