@@ -79,7 +79,6 @@ function detectRareCase(conditions: FhirEntry[]): { isRare: boolean; reason: str
 export async function POST(req: Request) {
   try {
     const bundle: FhirBundle = await req.json();
-
     if (bundle.resourceType !== 'Bundle') {
       return NextResponse.json({ error: 'Expected FHIR Bundle' }, { status: 400 });
     }
@@ -97,7 +96,6 @@ export async function POST(req: Request) {
 
     // Check for rare oncology conditions
     const { isRare, reason } = detectRareCase(conditions);
-
     if (!isRare) {
       return NextResponse.json({
         flagged: false,
@@ -121,11 +119,10 @@ export async function POST(req: Request) {
       .filter(Boolean)
       .join('\n\n');
 
-    // Upsert OMOP Person — find or create
+    // Find or create OMOP Person record
     let person = await prisma.person.findFirst({
       where: { person_source_value: hashedMrn },
     });
-
     if (!person) {
       person = await prisma.person.create({
         data: {
@@ -138,26 +135,27 @@ export async function POST(req: Request) {
       });
     }
 
-    // Create clinical case
-    const clinicalCase = await prisma.clinicalCase.create({
+    // Create CaseReport using schema-correct model and fields
+    const caseReport = await prisma.caseReport.create({
       data: {
         person_id: person.person_id,
-        fhir_bundle: bundle as object,
-        icd10_codes: reason,
-        status: 'PENDING_CONSENT',
-        flagged_at: new Date(),
+        provider_id: 1, // Default system provider; replace with real provider lookup
+        emr_narrative: clinicalText || `FHIR bundle with rare codes: ${reason}`,
+        is_rare_flag: true,
+        rare_flag_reason: reason,
+        status: 'CONSENT_PENDING',
       },
     });
 
     // Async LLM OMOP extraction (non-blocking)
     if (clinicalText) {
-      processEmrToOmop(clinicalCase.case_id, clinicalText).catch(console.error);
+      processEmrToOmop(caseReport.case_id).catch(console.error);
     }
 
     return NextResponse.json({
       flagged: true,
       reason,
-      case_id: clinicalCase.case_id,
+      case_id: caseReport.case_id,
       person_id: person.person_id,
       message: 'Rare oncology case flagged. Awaiting patient consent.',
     });
