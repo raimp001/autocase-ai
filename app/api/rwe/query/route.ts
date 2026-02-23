@@ -6,8 +6,13 @@ import { distributeRweRoyalties } from '@/lib/solana/royalty-distributor';
 import { Keypair } from '@solana/web3.js';
 import Stripe from 'stripe';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2025-01-27.acacia' as any });
+// Lazy Stripe initialization to avoid build-time errors when env var is absent
+function getStripe(): Stripe {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY not configured');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return new Stripe(key, { apiVersion: '2025-01-27.acacia' as any });
+}
 
 // Available OMOP cohort queries for pharmaceutical clients
 export async function POST(request: Request) {
@@ -38,6 +43,7 @@ export async function POST(request: Request) {
 
     // 2. Verify Stripe payment (for paid queries)
     if (stripePaymentIntentId) {
+      const stripe = getStripe();
       const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId);
       if (paymentIntent.status !== 'succeeded') {
         return NextResponse.json({ error: 'Payment not confirmed' }, { status: 402 });
