@@ -6,7 +6,8 @@ import { distributeRweRoyalties } from '@/lib/solana/royalty-distributor';
 import { Keypair } from '@solana/web3.js';
 import Stripe from 'stripe';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2024-06-20' });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2025-01-27.acacia' as any });
 
 // Available OMOP cohort queries for pharmaceutical clients
 export async function POST(request: Request) {
@@ -73,10 +74,7 @@ export async function POST(request: Request) {
       .filter((w): w is string => Boolean(w));
 
     // 5. Get attending physician wallet for this cohort
-    // In production: look up the specific attending physician for each case
-    const physicianWallet =
-      process.env.PHYSICIAN_DEFAULT_WALLET ??
-      'PhysicianDefaultWalletAddressPlaceholder11111111';
+    const physicianWallet = process.env.PHYSICIAN_DEFAULT_WALLET ?? 'PhysicianDefaultWalletAddressPlaceholder11111111';
 
     // 6. Trigger Solana royalty distribution (non-blocking)
     let txHash: string | null = null;
@@ -112,7 +110,6 @@ export async function POST(request: Request) {
     });
 
     // 8. Build de-identified cohort response
-    // Never expose: person_source_value, solana_wallet, or any linking keys
     const deidentifiedCohort = consentedCohort.map((c, idx) => ({
       cohortIndex: idx + 1,
       genderConceptId: c.person.gender_concept_id,
@@ -134,7 +131,7 @@ export async function POST(request: Request) {
       cohortSize: consentedCohort.length,
       royaltyDistribution: {
         txHash,
-        totalUsdcDistributed: queryPaymentAmount * 0.80, // 80% to physicians + patients
+        totalUsdcDistributed: queryPaymentAmount * 0.80,
         patientsRewarded: patientWallets.length,
       },
       data: deidentifiedCohort,
