@@ -6,25 +6,25 @@ import { prisma } from '@/lib/prisma';
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export interface OmopCondition {
-  concept_id: number;       // SNOMED-CT
-  source_value: string;     // ICD-10 or ICD-O source code
-  start_date: string;       // ISO date string
+  concept_id: number;          // SNOMED-CT
+  source_value: string;        // ICD-10 or ICD-O source code
+  start_date: string;          // ISO date string
   end_date?: string;
-  status_concept_id?: number; // OMOP Oncology: primary=4033240, met=4205430
-  confidence: number;       // 0-1, abstractor confidence
+  status_concept_id?: number;  // OMOP Oncology: primary=4033240, met=4205430
+  confidence: number;          // 0-1, abstractor confidence
 }
 
 export interface OmopDrug {
-  concept_id: number;       // RxNorm / HemOnc
-  source_value: string;     // Drug name from note
+  concept_id: number;          // RxNorm / HemOnc
+  source_value: string;        // Drug name from note
   start_date: string;
   end_date?: string;
   route_concept_id?: number;
-  line_of_therapy?: number; // 1L, 2L, etc.
+  line_of_therapy?: number;    // 1L, 2L, etc.
 }
 
 export interface OmopMeasurement {
-  concept_id: number;       // LOINC
+  concept_id: number;          // LOINC
   source_value: string;
   date: string;
   value_as_number?: number;
@@ -43,7 +43,7 @@ export interface OmopAbstraction {
 
 export async function processEmrToOmop(
   rawNoteText: string,
-  caseReportId: string
+  caseReportId: number
 ): Promise<OmopAbstraction> {
   const systemPrompt = `You are a clinical NLP system specialized in oncology OMOP CDM v5.4 abstraction.
 Your task:
@@ -53,7 +53,6 @@ Your task:
 4. Return ONLY valid JSON matching the OmopAbstraction schema
 5. Focus on rare oncology: mesothelioma, adrenocortical carcinoma, uveal melanoma, MCC, appendiceal
 6. Flag ICD-10 codes: C38.4, C45.9, C48.2, C74.0, C44.20, C69.3, C18.1, C80.1
-
 Schema:
 {
   "conditions": [{"concept_id": number, "source_value": string, "start_date": string, "confidence": number}],
@@ -80,11 +79,11 @@ Schema:
 
   const abstraction = JSON.parse(content) as OmopAbstraction;
 
-  // Store the processed extraction result
+  // Store the processed extraction result as ai_summary
   await prisma.caseReport.update({
-    where: { id: caseReportId },
+    where: { case_id: caseReportId },
     data: {
-      omop_json: abstraction as never,
+      ai_summary: abstraction.narrative_summary,
       status: 'OMOP_EXTRACTED',
     },
   });
