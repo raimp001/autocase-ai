@@ -1,35 +1,11 @@
 // lib/wallet/coinbase-wallet.ts
 // Coinbase Smart Wallet integration for oncology clinician royalty payments
-// Uses @coinbase/wallet-sdk for Web3 onboarding without seed phrases
-
-import CoinbaseWalletSDK from '@coinbase/wallet-sdk';
-
-// Initialize Coinbase Wallet SDK
-const APP_NAME = 'AutoCase AI - Oncology RWE';
-const APP_LOGO_URL = 'https://autocase-ai.vercel.app/logo.png';
-
-let walletSDK: CoinbaseWalletSDK | null = null;
-
-export function getCoinbaseWalletSDK(): CoinbaseWalletSDK {
-  if (!walletSDK) {
-    walletSDK = new CoinbaseWalletSDK({
-      appName: APP_NAME,
-      appLogoUrl: APP_LOGO_URL,
-    });
-  }
-  return walletSDK;
-}
+// NOTE: Wallet SDK is client-side only - use dynamic imports in components
 
 export interface WalletConnectionResult {
   address: string;
   chainId: number;
   isSmartWallet: boolean;
-}
-
-// Creates an Ethereum provider via Coinbase Smart Wallet
-export function createCoinbaseProvider() {
-  const sdk = getCoinbaseWalletSDK();
-  return sdk.makeWeb3Provider();
 }
 
 // Formats a wallet address for display (first 6 + last 4 chars)
@@ -46,7 +22,7 @@ export function isValidEthAddress(address: string): boolean {
 // Clinician royalty wallet registration
 export interface ClinicianWallet {
   physicianId: string;
-  ethAddress: string;    // Coinbase Smart Wallet address
+  ethAddress: string;    // Coinbase Smart Wallet address (Base L2)
   solanaAddress?: string; // For SOL royalty distributions
   registeredAt: Date;
 }
@@ -66,6 +42,7 @@ export function generateRoyaltyClaimPayload(params: {
     recipient_address: params.recipientAddress,
     timestamp: new Date().toISOString(),
     platform: 'autocase-ai',
+    chain: 'base-mainnet',
   };
 }
 
@@ -73,6 +50,13 @@ export const SUPPORTED_CHAINS = {
   ETHEREUM_MAINNET: 1,
   BASE_MAINNET: 8453,       // Coinbase L2 - low fees for royalty micro-payments
   BASE_SEPOLIA: 84532,      // Base testnet
+} as const;
+
+// App config for Coinbase Wallet SDK (used in client components)
+export const COINBASE_APP_CONFIG = {
+  appName: 'AutoCase AI - Oncology RWE',
+  appLogoUrl: 'https://autocase-ai.vercel.app/logo.png',
+  defaultChainId: SUPPORTED_CHAINS.BASE_MAINNET,
 } as const;
 
 // Base chain is preferred for Coinbase Smart Wallet royalty distributions
