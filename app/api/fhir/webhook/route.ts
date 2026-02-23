@@ -123,6 +123,7 @@ export async function POST(req: Request) {
     let person = await prisma.person.findFirst({
       where: { person_source_value: hashedMrn },
     });
+
     if (!person) {
       person = await prisma.person.create({
         data: {
@@ -139,7 +140,7 @@ export async function POST(req: Request) {
     const caseReport = await prisma.caseReport.create({
       data: {
         person_id: person.person_id,
-        provider_id: 1, // Default system provider; replace with real provider lookup
+        provider_id: 1, // Default system provider
         emr_narrative: clinicalText || `FHIR bundle with rare codes: ${reason}`,
         is_rare_flag: true,
         rare_flag_reason: reason,
@@ -147,9 +148,9 @@ export async function POST(req: Request) {
       },
     });
 
-    // Async LLM OMOP extraction (non-blocking)
+    // Async LLM OMOP extraction (non-blocking) - pass both required arguments
     if (clinicalText) {
-      processEmrToOmop(caseReport.case_id).catch(console.error);
+      processEmrToOmop(clinicalText, caseReport.case_id).catch(console.error);
     }
 
     return NextResponse.json({
