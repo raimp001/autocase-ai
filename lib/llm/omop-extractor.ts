@@ -3,7 +3,12 @@
 import OpenAI from 'openai';
 import { prisma } from '@/lib/prisma';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Lazy OpenAI initialization to avoid build-time errors when env var is absent
+function getOpenAI(): OpenAI {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error('OPENAI_API_KEY not configured');
+  return new OpenAI({ apiKey: key });
+}
 
 export interface OmopCondition {
   concept_id: number;          // SNOMED-CT
@@ -45,6 +50,8 @@ export async function processEmrToOmop(
   rawNoteText: string,
   caseReportId: number
 ): Promise<OmopAbstraction> {
+  const openai = getOpenAI();
+
   const systemPrompt = `You are a clinical NLP system specialized in oncology OMOP CDM v5.4 abstraction.
 Your task:
 1. Extract all conditions, drugs, and measurements from the clinical note
