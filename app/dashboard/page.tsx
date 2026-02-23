@@ -1,22 +1,23 @@
 import { prisma } from '@/lib/prisma';
+import Link from 'next/link';
 
 async function getDashboardData() {
   try {
     const [totalCases, pendingConsent, published, recentRevenue] = await Promise.all([
-      prisma.clinicalCase.count(),
-      prisma.clinicalCase.count({ where: { status: 'PENDING_CONSENT' } }),
-      prisma.clinicalCase.findMany({
+      prisma.caseReport.count(),
+      prisma.caseReport.count({ where: { status: 'CONSENT_PENDING' } }),
+      prisma.caseReport.findMany({
         where: { status: 'PUBLISHED' },
         include: { person: { include: { consent: true } } },
         orderBy: { created_at: 'desc' },
         take: 10,
       }),
-      prisma.royaltyPayment.aggregate({
-        _sum: { amount_usd: true },
+      prisma.rweQuery.aggregate({
+        _sum: { payment_amount: true },
         where: { created_at: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
       }),
     ]);
-    return { totalCases, pendingConsent, published, monthlyRevenue: recentRevenue._sum.amount_usd ?? 0 };
+    return { totalCases, pendingConsent, published, monthlyRevenue: recentRevenue._sum.payment_amount ?? 0 };
   } catch {
     return { totalCases: 0, pendingConsent: 0, published: [], monthlyRevenue: 0 };
   }
@@ -63,13 +64,13 @@ export default async function DashboardPage() {
             {published.map((c) => (
               <div key={c.case_id} className="bg-gray-800 rounded-lg p-4 border border-green-900">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-mono text-gray-400">Case #{c.case_id}</span>
-                  <span className="text-xs bg-green-900 text-green-300 px-2 py-0.5 rounded">Live</span>
+                  <span className="font-mono text-sm text-white">Case #{c.case_id}</span>
+                  <span className="text-xs bg-green-900 text-green-400 px-2 py-0.5 rounded-full">Live</span>
                 </div>
                 {c.ai_summary && (
-                  <p className="text-xs text-green-300 mb-2">{c.ai_summary}</p>
+                  <p className="text-gray-400 text-xs mt-1 line-clamp-2">{c.ai_summary}</p>
                 )}
-                <p className="text-xs text-gray-500">
+                <p className="text-gray-600 text-xs mt-2">
                   Wallet:{' '}
                   {c.person.consent?.solana_wallet
                     ? `${c.person.consent.solana_wallet.slice(0, 8)}...`
@@ -80,7 +81,7 @@ export default async function DashboardPage() {
                     href={`https://explorer.solana.com/tx/${c.person.consent.tx_hash}?cluster=devnet`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-blue-400 hover:text-blue-300 mt-1 block truncate"
+                    className="text-xs text-blue-400 hover:underline mt-1 block"
                   >
                     On-chain: {c.person.consent.tx_hash.slice(0, 20)}...
                   </a>
@@ -103,13 +104,18 @@ export default async function DashboardPage() {
               { name: 'Prisma / PostgreSQL', status: 'online', path: null },
             ].map((svc) => (
               <div key={svc.name} className="flex items-center justify-between py-2 border-b border-gray-800">
-                <div className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
-                  <span className="text-sm text-gray-300">{svc.name}</span>
-                </div>
-                <span className="text-xs text-green-400 font-mono">{svc.status}</span>
+                <span className="text-gray-300 text-sm">{svc.name}</span>
+                <span className="text-xs bg-green-900 text-green-400 px-2 py-0.5 rounded-full">{svc.status}</span>
               </div>
             ))}
+          </div>
+          <div className="mt-6">
+            <Link
+              href="/"
+              className="text-sm text-gray-400 hover:text-white transition-colors"
+            >
+              &larr; Back to Home
+            </Link>
           </div>
         </div>
       </div>
