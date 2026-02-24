@@ -1,6 +1,24 @@
 import { prisma } from '@/lib/prisma';
 import Link from 'next/link';
 
+const S = {
+  page: { minHeight: '100vh', background: '#0a0a0b', color: '#f8fafc', padding: '24px', fontFamily: 'system-ui, sans-serif' } as React.CSSProperties,
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 32 },
+  title: { fontSize: 24, fontWeight: 700, margin: 0 },
+  backLink: { fontSize: 14, color: '#10b981', textDecoration: 'none' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 20, marginBottom: 40 },
+  card: { padding: 24, borderRadius: 16, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' },
+  statValue: { fontSize: 32, fontWeight: 700, color: '#fff', marginBottom: 4 },
+  statLabel: { fontSize: 14, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 8 },
+  section: { background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 20, padding: 24 },
+  sectionTitle: { fontSize: 18, fontWeight: 600, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10 },
+  table: { width: '100%', borderCollapse: 'collapse' as const },
+  th: { textAlign: 'left' as const, fontSize: 12, textTransform: 'uppercase' as const, letterSpacing: '0.05em', color: '#64748b', padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.05)' },
+  td: { padding: '16px', borderBottom: '1px solid rgba(255,255,255,0.03)', fontSize: 14 },
+  status: { padding: '4px 8px', borderRadius: 6, fontSize: 11, fontWeight: 600 },
+  empty: { padding: '40px 0', textAlign: 'center' as const, color: '#64748b' },
+};
+
 async function getDashboardData() {
   try {
     const [totalCases, pendingConsent, published, recentRevenue] = await Promise.all([
@@ -23,7 +41,7 @@ async function getDashboardData() {
       published,
       monthlyRevenue: recentRevenue._sum.payment_amount ?? 0,
     };
-  } catch {
+  } catch (e) {
     return { totalCases: 0, pendingConsent: 0, published: [], monthlyRevenue: 0 };
   }
 }
@@ -32,126 +50,72 @@ export default async function DashboardPage() {
   const { totalCases, pendingConsent, published, monthlyRevenue } = await getDashboardData();
 
   const stats = [
-    { label: 'Cases Flagged', value: totalCases, icon: '\u{1F52C}' },
-    { label: 'Pending Consent', value: pendingConsent, icon: '\u{1F512}' },
-    { label: 'OMOP Published', value: published.length, icon: '\u{1F4DA}' },
-    { label: 'Monthly RWE Revenue', value: `$${monthlyRevenue.toFixed(2)}`, icon: '\u{1F4B0}' },
+    { label: 'Cases Flagged', value: totalCases, icon: '🔍' },
+    { label: 'Pending Consent', value: pendingConsent, icon: '⏳' },
+    { label: 'OMOP Published', value: published.length, icon: '📦' },
+    { label: '30D Revenue', value: `$${monthlyRevenue.toLocaleString()}`, icon: '💰' },
   ];
 
   return (
-    <div className="min-h-screen bg-[#0a0a0b] text-slate-100 p-4 sm:p-6 lg:p-8">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-          <div>
-            <div className="flex items-center gap-2 text-emerald-400 text-xs font-mono mb-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              LIVE EMR STREAM ACTIVE
-            </div>
-            <h1 className="text-3xl font-bold text-white tracking-tight">Clinical Dashboard</h1>
-            <p className="text-slate-400">Autonomous Case Repository &middot; OHSU Oncology</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link href="/" className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-black font-semibold rounded-xl text-sm transition-all shadow-lg shadow-emerald-500/20">
-              Platform Home
-            </Link>
-          </div>
-        </div>
+    <div style={S.page}>
+      <header style={S.header}>
+        <h1 style={S.title}>Clinical Dashboard</h1>
+        <Link href="/" style={S.backLink}>&larr; Home</Link>
+      </header>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {stats.map((s) => (
-            <div key={s.label} className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-6 hover:bg-white/[0.05] transition-all">
-              <div className="flex items-start justify-between mb-4">
-                <span className="text-2xl">{s.icon}</span>
-                <span className="text-xs font-medium text-emerald-400">+4% week</span>
-              </div>
-              <div className="text-3xl font-bold text-white mb-1">{s.value}</div>
-              <div className="text-sm text-slate-400">{s.label}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2">
-            <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl overflow-hidden">
-              <div className="p-6 border-b border-white/[0.08] flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-white">Recent OMOP-Mapped Cases</h3>
-                <span className="text-xs text-slate-500 uppercase tracking-widest">Last 10 Records</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="bg-white/[0.02]">
-                      <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Patient ID</th>
-                      <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Condition</th>
-                      <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Consent</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/[0.05]">
-                    {published.length > 0 ? (
-                      published.map((report) => (
-                        <tr key={report.case_id} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="px-6 py-4 font-mono text-sm text-emerald-400">{report.person.person_source_value ?? `P-${report.person_id}`}</td>
-                          <td className="px-6 py-4 text-sm text-slate-200">{report.rare_flag_reason ?? report.emr_narrative?.slice(0, 60)}</td>
-                          <td className="px-6 py-4">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              Published
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <span className="text-xs text-slate-400 font-mono">
-                              {report.person.consent?.tx_hash ? `Solana: ${report.person.consent.tx_hash.slice(0, 8)}...` : 'Pending'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    ) : (
-                      <tr>
-                        <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
-                          No published cases found. System is currently flagging rare events.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+      <div style={S.grid}>
+        {stats.map((stat) => (
+          <div key={stat.label} style={S.card}>
+            <div style={S.statValue}>{stat.value}</div>
+            <div style={S.statLabel}>
+              <span>{stat.icon}</span>
+              {stat.label}
             </div>
           </div>
+        ))}
+      </div>
 
-          <div className="space-y-6">
-            <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Oncology Clinician Wallet</h3>
-              <div className="bg-black/40 border border-white/[0.05] rounded-xl p-4 mb-4">
-                <div className="text-xs text-slate-500 mb-1 uppercase tracking-wider font-semibold">Royalty Address</div>
-                <div className="text-sm font-mono text-emerald-400 truncate">7x8Wq...f9Pz (Coinbase Smart Wallet)</div>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-400">Total Royalties Earned</span>
-                <span className="text-sm font-bold text-white">1.42 SOL</span>
-              </div>
-              <button className="w-full py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl text-sm font-semibold transition-all">
-                Claim Royalties via Solana
-              </button>
-            </div>
-
-            <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Node Health</h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">FHIR Webhook</span>
-                  <span className="text-xs font-mono text-emerald-400">OPERATIONAL</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">OpenAI GPT-4o</span>
-                  <span className="text-xs font-mono text-emerald-400">CONNECTED</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-slate-400">PostgreSQL (Neon)</span>
-                  <span className="text-xs font-mono text-emerald-400">CONNECTED</span>
-                </div>
-              </div>
-            </div>
-          </div>
+      <div style={S.section}>
+        <h2 style={S.sectionTitle}>
+          <span>📋</span> Recent Published Cases (OMOP v5.4)
+        </h2>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={S.table}>
+            <thead>
+              <tr>
+                <th style={S.th}>Case ID</th>
+                <th style={S.th}>Patient Source</th>
+                <th style={S.th}>OMOP Mapping</th>
+                <th style={S.th}>Status</th>
+                <th style={S.th}>Solana Attestation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {published.length > 0 ? (
+                published.map((c: any) => (
+                  <tr key={c.case_id}>
+                    <td style={S.td}>#{c.case_id}</td>
+                    <td style={S.td}>{c.person_source_value}</td>
+                    <td style={S.td}>
+                      <span style={{ color: '#10b981' }}>Active</span>
+                    </td>
+                    <td style={S.td}>
+                      <span style={{ ...S.status, background: 'rgba(16,185,129,0.1)', color: '#34d399' }}>PUBLISHED</span>
+                    </td>
+                    <td style={S.td}>
+                      <code style={{ fontSize: 11, color: '#64748b' }}>
+                        {c.tx_hash ? `${c.tx_hash.slice(0, 8)}...` : 'N/A'}
+                      </code>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={5} style={S.empty}>No published cases found.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
